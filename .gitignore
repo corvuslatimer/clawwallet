@@ -1,5 +1,6 @@
 # local wallet data (keys, contacts)
-moltwallet/
+clawwallet/
+wallets/
 
 # dependencies
 node_modules/

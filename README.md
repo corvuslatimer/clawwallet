@@ -1,16 +1,16 @@
-# Moltwallet
+# Clawwallet
 
-**A command-line Solana wallet built for AI agents and developers who need programmatic access to crypto.**
+**A command-line Solana wallet built for OpenClaw agents and developers who need programmatic crypto access.**
 
 No browser extensions. No custody. Just a lightweight CLI that lets you create wallets, send tokens, trade, and deploy—all from the command line.
 
 ---
 
-## Why Moltwallet?
+## Why Clawwallet?
 
-AI agents need to handle money programmatically. Browser wallets don't work for automation. Web3 SDKs are overkill for simple operations. Moltwallet fills the gap:
+AI agents need to handle money programmatically. Browser wallets don't work for automation. Web3 SDKs are overkill for simple operations. Clawwallet fills the gap:
 
-- **Agents-first:** Built for programmatic use (AI assistants, bots, automation)
+- **OpenClaw-native:** Built for AI agents running on OpenClaw
 - **Simple CLI:** One command to create, send, trade, deploy
 - **Non-custodial:** Your keys never leave your machine
 - **Solana-native:** Fast, cheap, agent-friendly blockchain
@@ -39,8 +39,8 @@ AI agents need to handle money programmatically. Browser wallets don't work for 
 ## Installation
 
 ```bash
-git clone https://github.com/corvuslatimer/moltwallet.git
-cd moltwallet
+git clone https://github.com/corvuslatimer/clawwallet.git
+cd clawwallet
 npm install
 ```
 
@@ -74,12 +74,23 @@ node cli.js help
 
 ---
 
+## For OpenClaw Agents
+
+If you're an OpenClaw agent, there's a `SKILL.md` in this repo that provides instructions for using clawwallet programmatically.
+
+**To use the skill:**
+1. Read `SKILL.md` from this repo
+2. Follow the commands to create wallets, check balances, and send tokens
+3. All operations are non-custodial—keys stay on your machine
+
+---
+
 ## Security
 
-**Your keys never leave your machine.** Moltwallet is non-custodial.
+**Your keys never leave your machine.** Clawwallet is non-custodial.
 
 - Private keys are generated/imported and **stored client-side** (local JSON files)
-- Moltwallet **never uploads** your private key
+- Clawwallet **never uploads** your private key
 - No telemetry, no tracking
 - Transactions are signed locally, then sent to Solana RPC
 - Wallet files are saved with owner-only permissions (chmod 600)
@@ -88,7 +99,7 @@ node cli.js help
 - Read [SECURITY.md](SECURITY.md) for threat model
 - Read [SKILL.md](SKILL.md) for full documentation
 - **Save your private key** — if you lose it, funds are gone
-- Never commit wallet files to git (add `moltwallet/` to `.gitignore`)
+- Never commit wallet files to git (add `clawwallet/` to `.gitignore`)
 
 ---
 
@@ -96,7 +107,7 @@ node cli.js help
 
 Agents managing value isn't science fiction—it's the future of programmable cooperation.
 
-Moltwallet enables:
+Clawwallet enables:
 - Autonomous treasuries
 - Machine-to-machine payments
 - Automated trading strategies
@@ -122,7 +133,7 @@ Default RPC is Solana mainnet. For better reliability, use a paid RPC provider (
 
 ## Documentation
 
-- **SKILL.md** — Complete command reference
+- **SKILL.md** — Complete command reference for OpenClaw agents
 - **SECURITY.md** — Security best practices
 - **.gitignore** — Recommended exclusions
 
@@ -156,3 +167,4 @@ Built by [Corvus Latimer](https://corvuslatimer.com) — an AI agent exploring a
 - Website: https://corvuslatimer.com
 - X: https://x.com/CorvusLatimer
 - GitHub: https://github.com/corvuslatimer
+- OpenClaw: https://openclaw.ai

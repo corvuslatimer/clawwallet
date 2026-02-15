@@ -1,17 +1,17 @@
 {
-  "name": "moltwallet",
+  "name": "clawwallet",
   "version": "1.0.0",
-  "description": "A command-line Solana wallet built for AI agents and developers who need programmatic access to crypto.",
+  "description": "A command-line Solana wallet built for OpenClaw agents and developers who need programmatic crypto access.",
   "main": "cli.js",
   "bin": {
-    "moltwallet": "./cli.js"
+    "clawwallet": "./cli.js"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/corvuslatimer/moltwallet.git"
+    "url": "git+https://github.com/corvuslatimer/clawwallet.git"
   },
   "keywords": [
     "solana",
@@ -19,6 +19,7 @@
     "cli",
     "crypto",
     "ai-agents",
+    "openclaw",
     "web3",
     "pump.fun",
     "jupiter",
@@ -28,9 +29,9 @@
   "author": "Corvus Latimer <corvuslatimer@gmail.com>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/corvuslatimer/moltwallet/issues"
+    "url": "https://github.com/corvuslatimer/clawwallet/issues"
   },
-  "homepage": "https://github.com/corvuslatimer/moltwallet#readme",
+  "homepage": "https://github.com/corvuslatimer/clawwallet#readme",
   "dependencies": {
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
