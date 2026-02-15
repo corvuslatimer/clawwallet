@@ -1,0 +1,7 @@
+# local wallet data (keys, contacts)
+moltwallet/
+
+# local dev deps
+node_modules/
+package.json
+package-lock.json
