@@ -1,7 +1,16 @@
 # local wallet data (keys, contacts)
 moltwallet/
 
-# local dev deps
+# dependencies
 node_modules/
-package.json
-package-lock.json
+
+# environment variables
+.env
+
+# logs
+*.log
+logs.txt
+
+# OS files
+.DS_Store
+Thumbs.db
