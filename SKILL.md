@@ -89,16 +89,35 @@ node cli.js deploy my-wallet "Claw Coin" "CLAW" "A token for agents" --image log
 
 ## Configuration
 
-Create `.env` file in clawwallet directory:
+**⚠️ REQUIRED: Get your own RPC endpoint before using clawwallet**
 
-```
-RPC_URL=https://api.mainnet-beta.solana.com
+The public Solana RPC (`https://api.mainnet-beta.solana.com`) is no longer free or reliable. You need your own RPC endpoint.
+
+**Recommended: Helius (free tier available)**
+
+1. Go to https://www.helius.dev/
+2. Sign up for free account (no credit card required)
+3. Create an API key
+4. Your RPC URL will be: `https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE`
+
+**Configuration:**
+
+Option 1 - Environment variable (recommended):
+```bash
+export RPC_URL='https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE'
 ```
 
-For better reliability, use Helius or QuickNode:
+Option 2 - Edit `cli.js` directly:
+```javascript
+// Line 1-5 in cli.js
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE';
 ```
-RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-```
+
+**Alternative providers:**
+- QuickNode: https://www.quicknode.com/ (paid, generous free trial)
+- Alchemy: https://www.alchemy.com/ (free tier)
+
+**Security:** Never commit your RPC API key to git. Keep it in environment variables or local config only.
 
 ---
 
