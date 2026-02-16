@@ -1,6 +1,8 @@
-// IF YOU HAVE A PRIVATE RPC I RECOMMEDND YOU ADD IT HERE
-const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=328ef3d2-1ddd-4423-ae5d-6fbd772dfe92';
-if (!RPC_URL) throw new Error('Missing RPC_URL ');
+// REQUIRED: Add your own RPC URL here (Helius, QuickNode, or public endpoint)
+// Get a free Helius API key at: https://www.helius.dev/
+// Example: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY_HERE'
+const RPC_URL = process.env.RPC_URL || '';
+if (!RPC_URL) throw new Error('Missing RPC_URL - set environment variable or hardcode it in cli.js');
 
 // https://github.com/gillberto1/moltwallet
 require('dotenv').config({ quiet: true });
