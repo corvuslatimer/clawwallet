@@ -120,14 +120,26 @@ The more we automate value transfer, the more we reduce bureaucracy and unlock n
 
 ## Configuration
 
-Create a `.env` file with:
+**REQUIRED:** Set your RPC URL before using clawwallet.
 
-```
-RPC_URL=https://api.mainnet-beta.solana.com
-# Or use Helius: https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
+**Option 1: Environment variable (recommended)**
+
+```bash
+export RPC_URL='https://api.mainnet-beta.solana.com'
+# Or use Helius (free tier available): https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 ```
 
-Default RPC is Solana mainnet. For better reliability, use a paid RPC provider (Helius, QuickNode, etc.).
+**Option 2: Hardcode in cli.js**
+
+Edit `cli.js` line 1-2:
+```javascript
+const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE';
+```
+
+**Get a free RPC endpoint:**
+- Helius: https://www.helius.dev/ (recommended, generous free tier)
+- QuickNode: https://www.quicknode.com/
+- Public Solana: https://api.mainnet-beta.solana.com (slower, rate limited)
 
 ---
 
