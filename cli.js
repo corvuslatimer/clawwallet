@@ -1,7 +1,7 @@
 // REQUIRED: Add your own RPC URL here (Helius, QuickNode, or public endpoint)
 // Get a free Helius API key at: https://www.helius.dev/
 // Example: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY_HERE'
-const RPC_URL = process.env.RPC_URL || '';
+const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=62ed4251-487e-4f0e-96bd-4348b716659f';
 if (!RPC_URL) throw new Error('Missing RPC_URL - set environment variable or hardcode it in cli.js');
 
 // https://github.com/gillberto1/moltwallet
@@ -973,7 +973,7 @@ async function main() {
   const ensureWalletDir = () => {
     const fs = require('fs');
     const path = require('path');
-    const dir = path.join(process.cwd(), 'moltwallet', 'wallets');
+    const dir = path.join(process.cwd(), 'clawwallet', 'wallets');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
@@ -1021,11 +1021,11 @@ async function main() {
     const gitignorePath = path.join(process.cwd(), '.gitignore');
     try {
       if (!fs.existsSync(gitignorePath)) {
-        console.warn('Warning: .gitignore not found. Add /moltwallet to avoid committing keys.');
+        console.warn('Warning: .gitignore not found. Add /clawwallet to avoid committing keys.');
       } else {
         const gi = fs.readFileSync(gitignorePath, 'utf8');
-        if (!gi.includes('/moltwallet')) {
-          console.warn('Warning: .gitignore missing /moltwallet. Add it to avoid committing keys.');
+        if (!gi.includes('/clawwallet')) {
+          console.warn('Warning: .gitignore missing /clawwallet. Add it to avoid committing keys.');
         }
       }
     } catch {}
