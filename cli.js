@@ -973,7 +973,10 @@ async function main() {
   const ensureWalletDir = () => {
     const fs = require('fs');
     const path = require('path');
-    const dir = path.join(process.cwd(), 'clawwallet', 'wallets');
+    const cwd = process.cwd();
+    const dir = path.basename(cwd) === 'clawwallet'
+      ? path.join(cwd, 'wallets')
+      : path.join(cwd, 'clawwallet', 'wallets');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
