@@ -359,11 +359,10 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
     const instructionCollector = new Transaction();
 
     const tradeLamports = lamportsIn;
-
     const inputMint = 'So11111111111111111111111111111111111111112';
     const outputMint = mint;
 
-    const quoteUrl = `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${tradeLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false`;
+    const quoteUrl = `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${tradeLamports}&slippageBps=${slippageBps}`;
 
     let quoteResponse;
     try {
@@ -371,10 +370,7 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
       quoteResponse = quoteRes.data;
     } catch (err) {
       const errorMsg = err.response?.data?.error || err.message;
-      const suggestion = errorMsg.includes('No route found')
-        ? ' (Try again in a few minutes or check if token has liquidity on DEXes)'
-        : '';
-      throw new Error(`Jupiter quote failed: ${err.response?.status || ''} - ${errorMsg}${suggestion}`);
+      throw new Error(`Jupiter quote failed: ${err.response?.status || ''} - ${errorMsg}`);
     }
 
     if (!quoteResponse || !quoteResponse.outAmount) {
@@ -386,77 +382,120 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
       quoteResponse,
       userPublicKey: user.publicKey.toBase58(),
       wrapAndUnwrapSol: true,
-      computeUnitPriceMicroLamports: computeUnitPriceMicrolamports(600_000),
+      dynamicComputeUnitLimit: true,
       useSharedAccounts: false,
     };
 
-    let swapInstructionsData;
+    let swapData;
     try {
       const res = await axios.post(instructionsUrl, body, {
         headers: { 'Content-Type': 'application/json' }
       });
-      swapInstructionsData = res.data;
+      swapData = res.data;
     } catch (err) {
       throw new Error(`Jupiter swap-instructions failed: ${err.response?.status || ''} - ${err.response?.data?.error || err.message}`);
     }
 
-    const jupiterInstructions = [];
+    const { blockhash: bh, lastValidBlockHeight: lvbh } = await connection.getLatestBlockhash('confirmed');
+    const instructions = [];
 
-    if (swapInstructionsData.setupInstructions) {
-      swapInstructionsData.setupInstructions.forEach(instr => {
-        jupiterInstructions.push(new TransactionInstruction({
-          programId: new PublicKey(instr.programId),
-          keys: instr.accounts.map(a => ({
+    // Add all instructions in order
+    if (swapData.tokenLedgerInstruction) {
+      instructions.push(new TransactionInstruction({
+        programId: new PublicKey(swapData.tokenLedgerInstruction.programId),
+        keys: swapData.tokenLedgerInstruction.accounts.map(a => ({
+          pubkey: new PublicKey(a.pubkey),
+          isSigner: a.isSigner,
+          isWritable: a.isWritable
+        })),
+        data: Buffer.from(swapData.tokenLedgerInstruction.data, 'base64')
+      }));
+    }
+
+    if (swapData.computeBudgetInstructions) {
+      swapData.computeBudgetInstructions.forEach(cbi => {
+        instructions.push(new TransactionInstruction({
+          programId: new PublicKey(cbi.programId),
+          keys: cbi.accounts.map(a => ({
             pubkey: new PublicKey(a.pubkey),
             isSigner: a.isSigner,
             isWritable: a.isWritable
           })),
-          data: Buffer.from(instr.data, 'base64')
+          data: Buffer.from(cbi.data, 'base64')
         }));
       });
     }
 
-    if (swapInstructionsData.swapInstruction) {
-      const instr = swapInstructionsData.swapInstruction;
-      jupiterInstructions.push(new TransactionInstruction({
-        programId: new PublicKey(instr.programId),
-        keys: instr.accounts.map(a => ({
+    if (swapData.setupInstructions) {
+      swapData.setupInstructions.forEach(si => {
+        instructions.push(new TransactionInstruction({
+          programId: new PublicKey(si.programId),
+          keys: si.accounts.map(a => ({
+            pubkey: new PublicKey(a.pubkey),
+            isSigner: a.isSigner,
+            isWritable: a.isWritable
+          })),
+          data: Buffer.from(si.data, 'base64')
+        }));
+      });
+    }
+
+    if (swapData.swapInstruction) {
+      instructions.push(new TransactionInstruction({
+        programId: new PublicKey(swapData.swapInstruction.programId),
+        keys: swapData.swapInstruction.accounts.map(a => ({
           pubkey: new PublicKey(a.pubkey),
           isSigner: a.isSigner,
           isWritable: a.isWritable
         })),
-        data: Buffer.from(instr.data, 'base64')
+        data: Buffer.from(swapData.swapInstruction.data, 'base64')
       }));
     }
 
-    if (swapInstructionsData.cleanupInstruction) {
-      const instr = swapInstructionsData.cleanupInstruction;
-      jupiterInstructions.push(new TransactionInstruction({
-        programId: new PublicKey(instr.programId),
-        keys: instr.accounts.map(a => ({
+    if (swapData.otherInstructions) {
+      swapData.otherInstructions.forEach(oi => {
+        instructions.push(new TransactionInstruction({
+          programId: new PublicKey(oi.programId),
+          keys: oi.accounts.map(a => ({
+            pubkey: new PublicKey(a.pubkey),
+            isSigner: a.isSigner,
+            isWritable: a.isWritable
+          })),
+          data: Buffer.from(oi.data, 'base64')
+        }));
+      });
+    }
+
+    if (swapData.cleanupInstruction) {
+      instructions.push(new TransactionInstruction({
+        programId: new PublicKey(swapData.cleanupInstruction.programId),
+        keys: swapData.cleanupInstruction.accounts.map(a => ({
           pubkey: new PublicKey(a.pubkey),
           isSigner: a.isSigner,
           isWritable: a.isWritable
         })),
-        data: Buffer.from(instr.data, 'base64')
+        data: Buffer.from(swapData.cleanupInstruction.data, 'base64')
       }));
     }
-
-    instructionCollector.add(...jupiterInstructions);
 
     let lookupTables = [];
-    if (swapInstructionsData.addressLookupTableAccounts) {
-      lookupTables = swapInstructionsData.addressLookupTableAccounts.map(alt => ({
-        key: new PublicKey(alt.key),
-        writableIndexes: alt.writableIndexes || [],
-        readonlyIndexes: alt.readonlyIndexes || []
-      }));
+    if (swapData.addressLookupTableAddresses && swapData.addressesByLookupTableAddress) {
+      for (const addr of swapData.addressLookupTableAddresses) {
+        const altData = swapData.addressesByLookupTableAddress[addr];
+        if (altData) {
+          lookupTables.push({
+            key: new PublicKey(addr),
+            writableIndexes: altData.writableIndexes || [],
+            readonlyIndexes: altData.readonlyIndexes || []
+          });
+        }
+      }
     }
 
     const messageV0 = new TransactionMessage({
       payerKey: user.publicKey,
-      recentBlockhash: blockhash,
-      instructions: instructionCollector.instructions
+      recentBlockhash: bh,
+      instructions
     }).compileToV0Message(lookupTables);
 
     const versionedTx = new VersionedTransaction(messageV0);
