@@ -170,7 +170,27 @@ async function getBondingCurveState(mintPk, tokenProgramId) {
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  const info = await connection.getAccountInfo(bondingCurve);
+  let info = null;
+  let retries = 0;
+  const maxRetries = 3;
+  
+  while (!info && retries < maxRetries) {
+    try {
+      info = await connection.getAccountInfo(bondingCurve, 'confirmed');
+      if (!info && retries < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, 500));
+        retries++;
+      }
+    } catch (err) {
+      if (retries < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, 500));
+        retries++;
+      } else {
+        throw err;
+      }
+    }
+  }
+  
   if (!info) return null;
 
   const d = info.data;
@@ -190,11 +210,15 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
   const lamportsIn = Math.floor(sol * LAMPORTS_PER_SOL);
   const tokenProgramId = await tokenProgramForMint(mintPk);
 
-  const curve = await getBondingCurveState(mintPk, tokenProgramId);
-  if (!curve) throw new Error('Bonding curve not found');
+  let curve = null;
+  try {
+    curve = await getBondingCurveState(mintPk, tokenProgramId);
+  } catch (err) {
+    console.warn('Warning: Could not fetch bonding curve, will try Jupiter:', err.message);
+  }
 
   // ─── PATH 1: PRE-BONDED (Pump.fun native bonding curve) ─────────────────
-  if (!curve.complete) {
+  if (curve && !curve.complete) {
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     const tx = new Transaction().add(
       // Boost priority so we don't hit blockhash expiry under load
@@ -346,7 +370,11 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
       const quoteRes = await axios.get(quoteUrl);
       quoteResponse = quoteRes.data;
     } catch (err) {
-      throw new Error(`Jupiter quote failed: ${err.response?.status || ''} - ${err.response?.data?.error || err.message}`);
+      const errorMsg = err.response?.data?.error || err.message;
+      const suggestion = errorMsg.includes('No route found')
+        ? ' (Try again in a few minutes or check if token has liquidity on DEXes)'
+        : '';
+      throw new Error(`Jupiter quote failed: ${err.response?.status || ''} - ${errorMsg}${suggestion}`);
     }
 
     if (!quoteResponse || !quoteResponse.outAmount) {
@@ -359,7 +387,7 @@ async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
       userPublicKey: user.publicKey.toBase58(),
       wrapAndUnwrapSol: true,
       computeUnitPriceMicroLamports: computeUnitPriceMicrolamports(600_000),
-      useSharedAccounts: true,
+      useSharedAccounts: false,
     };
 
     let swapInstructionsData;
@@ -558,7 +586,7 @@ async function sellToken({ privateKey, mint, amount, slippageBps = 500 }) {
     userPublicKey: user.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
     computeUnitPriceMicroLamports: computeUnitPriceMicrolamports(600_000),
-    useSharedAccounts: true,
+    useSharedAccounts: false,
   };
 
   let swapInstructionsData;
@@ -1260,6 +1288,24 @@ async function main() {
   }
 
   const VERSION = 'v1.3';
+
+  if (cmd === 'pumpbuy') {
+    const keyfile = getFlag('keyfile');
+    const mint = getFlag('mint');
+    const sol = Number(getFlag('sol'));
+    const slippageBps = getFlag('slippageBps') ? Number(getFlag('slippageBps')) : 1000;
+    if (!keyfile || !mint || !Number.isFinite(sol)) {
+      throw new Error('Usage: pumpbuy --keyfile <WALLET_JSON> --mint <MINT> --sol <AMOUNT> [--slippageBps <BPS>]');
+    }
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    try {
+      const res = await pumpBuyToken({ privateKey, mint, sol, slippageBps });
+      console.log(JSON.stringify(res, null, 2));
+    } catch (err) {
+      throw new Error(`Pump.fun buy failed: ${err.message}`);
+    }
+    return;
+  }
 
   if (cmd === 'check') {
     await connection.getLatestBlockhash('confirmed');
