@@ -5,8 +5,9 @@ wallets/
 # dependencies
 node_modules/
 
-# environment variables
+# environment variables / local config
 .env
+config.json
 
 # logs
 *.log

@@ -129,12 +129,16 @@ export RPC_URL='https://api.mainnet-beta.solana.com'
 # Or use Helius (free tier available): https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 ```
 
-**Option 2: Hardcode in cli.js**
+**Option 2: Local config file**
 
-Edit `cli.js` line 1-2:
-```javascript
-const RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE';
+Create a local `config.json` (ignored by git):
+```json
+{
+  "rpcUrl": "https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE"
+}
 ```
+
+Use `config.example.json` as a template.
 
 **Get a free RPC endpoint:**
 - Helius: https://www.helius.dev/ (recommended, generous free tier)

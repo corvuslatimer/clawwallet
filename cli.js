@@ -1,8 +1,13 @@
-// REQUIRED: Add your own RPC URL here (Helius, QuickNode, or public endpoint)
-// Get a free Helius API key at: https://www.helius.dev/
-// Example: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY_HERE'
-const RPC_URL = process.env.RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=62ed4251-487e-4f0e-96bd-4348b716659f';
-if (!RPC_URL) throw new Error('Missing RPC_URL - set environment variable or hardcode it in cli.js');
+// RPC configuration: prefer env, fallback to local config.json
+let localConfig = {};
+try {
+  localConfig = require('./config.json');
+} catch (_) {
+  localConfig = {};
+}
+
+const RPC_URL = process.env.RPC_URL || localConfig.rpcUrl;
+if (!RPC_URL) throw new Error('Missing RPC_URL - set environment variable or config.json');
 
 // https://github.com/gillberto1/moltwallet
 require('dotenv').config({ quiet: true });
@@ -160,6 +165,10 @@ function userVolumeAccumulatorPda(user) {
   return PublicKey.findProgramAddressSync([Buffer.from('user_volume_accumulator'), user.toBuffer()], PUMP_PROGRAM_ID)[0];
 }
 
+function bondingCurveV2Pda(mintPk) {
+  return PublicKey.findProgramAddressSync([Buffer.from('bonding-curve-v2'), mintPk.toBuffer()], PUMP_PROGRAM_ID)[0];
+}
+
 async function getBondingCurveState(mintPk, tokenProgramId) {
   const bondingCurve = bondingCurvePda(mintPk);
   const associatedBondingCurve = await getAssociatedTokenAddress(
@@ -204,306 +213,105 @@ async function getBondingCurveState(mintPk, tokenProgramId) {
   };
 }
 
-async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
+async function pumpBuyToken({ privateKey, mint, sol, slippageBps = 1000 }) {
   const user = keypairFromPrivateKey(privateKey);
   const mintPk = new PublicKey(mint);
-  const lamportsIn = Math.floor(sol * LAMPORTS_PER_SOL);
   const tokenProgramId = await tokenProgramForMint(mintPk);
+  const curve = await getBondingCurveState(mintPk, tokenProgramId);
+  if (!curve) throw new Error('Bonding curve not found');
+  if (curve.complete) throw new Error('Curve already completed; use regular buy path');
 
-  let curve = null;
-  try {
-    curve = await getBondingCurveState(mintPk, tokenProgramId);
-  } catch (err) {
-    console.warn('Warning: Could not fetch bonding curve, will try Jupiter:', err.message);
-  }
+  const lamportsIn = Math.floor(Number(sol) * LAMPORTS_PER_SOL);
+  if (!Number.isFinite(lamportsIn) || lamportsIn <= 0) throw new Error('sol must be > 0');
+  const tradeLamportsBig = BigInt(lamportsIn);
 
-  // ─── PATH 1: PRE-BONDED (Pump.fun native bonding curve) ─────────────────
-  if (curve && !curve.complete) {
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    const tx = new Transaction().add(
-      // Boost priority so we don't hit blockhash expiry under load
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPriceMicrolamports(300_000) })
-    );
+  const userAta = await getAssociatedTokenAddress(
+    mintPk, user.publicKey, false, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  const bcAta = await getAssociatedTokenAddress(
+    mintPk, curve.bondingCurve, true, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
+  );
 
-    const userAta = await getAssociatedTokenAddress(
-      mintPk, user.publicKey, false, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-    const bcAta = await getAssociatedTokenAddress(
-      mintPk, curve.bondingCurve, true, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
-    );
+  const tx = new Transaction().add(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 300_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPriceMicrolamports(300_000) })
+  );
 
-    // Precompute rent for any missing ATAs to avoid rent-exemption failures
-    const rentExempt = await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE);
-    let rentNeeded = 0;
-
-    const userAtaInfo = await connection.getAccountInfo(userAta);
-    const bcAtaInfo = await connection.getAccountInfo(bcAta);
-    const bondingCurveInfo = await connection.getAccountInfo(curve.bondingCurve);
-
-    if (!userAtaInfo) {
-      rentNeeded += rentExempt;
-      tx.add(
-        createAssociatedTokenAccountInstruction(
-          user.publicKey, userAta, user.publicKey, mintPk, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
-        )
-      );
-    }
-
-    if (!bcAtaInfo) {
-      rentNeeded += rentExempt;
-      tx.add(
-        createAssociatedTokenAccountInstruction(
-          user.publicKey, bcAta, curve.bondingCurve, mintPk, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID
-        )
-      );
-    }
-
-    // Top up bonding curve lamports to rent-exempt if needed
-    let topUpLamports = 0;
-    if (bondingCurveInfo) {
-      const neededForRent = rentExempt;
-      if (bondingCurveInfo.lamports < neededForRent) {
-        topUpLamports = neededForRent - bondingCurveInfo.lamports;
-        tx.add(
-          SystemProgram.transfer({
-            fromPubkey: user.publicKey,
-            toPubkey: curve.bondingCurve,
-            lamports: topUpLamports,
-          })
-        );
-      }
-    } else {
-      throw new Error('Bonding curve account missing on-chain');
-    }
-
-    // Ensure wallet can cover trade + rent + any bonding-curve top-up + a small fee buffer
-    const feeBufferLamports = Math.floor(0.0005 * LAMPORTS_PER_SOL); // ~0.0005 SOL buffer
-    const neededLamports = lamportsIn + rentNeeded + topUpLamports + feeBufferLamports;
-    const balance = await connection.getBalance(user.publicKey);
-    if (balance < neededLamports) {
-      throw new Error(`Wallet balance too low for trade + rent (need ${(neededLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL)`);
-    }
-
-    const tradeLamports = lamportsIn;
-    const tradeLamportsBig = BigInt(tradeLamports);
-
-    const newSol = curve.virtualSolReserves + tradeLamportsBig;
-    const newToken = (curve.virtualSolReserves * curve.virtualTokenReserves) / newSol;
-    const tokensOut = curve.virtualTokenReserves - newToken;
-    const maxSolCost = tradeLamportsBig + (tradeLamportsBig * BigInt(slippageBps)) / 10_000n;
-
-    const data = Buffer.concat([anchorDisc('buy'), Buffer.alloc(8), Buffer.alloc(8)]);
-    data.writeBigUInt64LE(tokensOut, 8);
-    data.writeBigUInt64LE(maxSolCost, 16);
-
+  const userAtaInfo = await connection.getAccountInfo(userAta);
+  if (!userAtaInfo) {
     tx.add(
-      new TransactionInstruction({
-        programId: PUMP_PROGRAM_ID,
-        keys: [
-          { pubkey: PUMP_GLOBAL, isSigner: false, isWritable: false },
-          { pubkey: PUMP_FEE_RECIPIENT, isSigner: false, isWritable: true },
-          { pubkey: mintPk, isSigner: false, isWritable: false },
-          { pubkey: curve.bondingCurve, isSigner: false, isWritable: true },
-          { pubkey: bcAta, isSigner: false, isWritable: true },
-          { pubkey: userAta, isSigner: false, isWritable: true },
-          { pubkey: user.publicKey, isSigner: true, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          { pubkey: tokenProgramId, isSigner: false, isWritable: false },
-          { pubkey: creatorVaultPda(curve.creator), isSigner: false, isWritable: true },
-          { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
-          { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
-          { pubkey: PUMP_GLOBAL_VOLUME_ACCUMULATOR, isSigner: false, isWritable: false },
-          { pubkey: userVolumeAccumulatorPda(user.publicKey), isSigner: false, isWritable: true },
-          { pubkey: PUMP_FEE_CONFIG, isSigner: false, isWritable: false },
-          { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
-        ],
-        data
-      })
+      createAssociatedTokenAccountInstruction(
+        user.publicKey,
+        userAta,
+        user.publicKey,
+        mintPk,
+        tokenProgramId,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      )
     );
-
-    tx.feePayer = user.publicKey;
-    tx.recentBlockhash = blockhash;
-    tx.sign(user);
-
-    // Send with a lightweight retry to avoid blockhash expiry
-    let sig;
-    try {
-      sig = await connection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: false,
-        maxRetries: 5,
-      });
-    } catch (e) {
-      // If blockhash/fee issues, refresh blockhash and resend once
-      if (e?.message?.includes('blockheight exceeded')) {
-        const { blockhash: bh2, lastValidBlockHeight: lvbh2 } = await connection.getLatestBlockhash('confirmed');
-        tx.recentBlockhash = bh2;
-        tx.sign(user);
-        sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 5 });
-        // update for confirm
-        return { signature: sig, tradeLamports, blockhash: bh2, lastValidBlockHeight: lvbh2 };
-      }
-      throw e;
-    }
-
-    await connection.confirmTransaction(
-      { signature: sig, blockhash, lastValidBlockHeight },
-      'confirmed'
-    );
-
-    return { signature: sig, tradeLamports };
   }
 
-  else {
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    const instructionCollector = new Transaction();
+  const newSol = curve.virtualSolReserves + tradeLamportsBig;
+  const newToken = (curve.virtualSolReserves * curve.virtualTokenReserves) / newSol;
+  const tokensOut = curve.virtualTokenReserves - newToken;
+  const maxSolCost = tradeLamportsBig + (tradeLamportsBig * BigInt(slippageBps)) / 10_000n;
 
-    const tradeLamports = lamportsIn;
-    const inputMint = 'So11111111111111111111111111111111111111112';
-    const outputMint = mint;
+  const data = Buffer.concat([anchorDisc('buy'), Buffer.alloc(8), Buffer.alloc(8)]);
+  data.writeBigUInt64LE(tokensOut, 8);
+  data.writeBigUInt64LE(maxSolCost, 16);
 
-    const quoteUrl = `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${tradeLamports}&slippageBps=${slippageBps}`;
+  tx.add(
+    new TransactionInstruction({
+      programId: PUMP_PROGRAM_ID,
+      keys: [
+        { pubkey: PUMP_GLOBAL, isSigner: false, isWritable: false },
+        { pubkey: PUMP_FEE_RECIPIENT, isSigner: false, isWritable: true },
+        { pubkey: mintPk, isSigner: false, isWritable: false },
+        { pubkey: curve.bondingCurve, isSigner: false, isWritable: true },
+        { pubkey: bcAta, isSigner: false, isWritable: true },
+        { pubkey: userAta, isSigner: false, isWritable: true },
+        { pubkey: user.publicKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+        { pubkey: creatorVaultPda(curve.creator), isSigner: false, isWritable: true },
+        { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+        { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: PUMP_GLOBAL_VOLUME_ACCUMULATOR, isSigner: false, isWritable: false },
+        { pubkey: userVolumeAccumulatorPda(user.publicKey), isSigner: false, isWritable: true },
+        { pubkey: PUMP_FEE_CONFIG, isSigner: false, isWritable: false },
+        { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data,
+    })
+  );
 
-    let quoteResponse;
-    try {
-      const quoteRes = await axios.get(quoteUrl);
-      quoteResponse = quoteRes.data;
-    } catch (err) {
-      const errorMsg = err.response?.data?.error || err.message;
-      throw new Error(`Jupiter quote failed: ${err.response?.status || ''} - ${errorMsg}`);
-    }
+  const sig = await sendTx(tx, [user]);
+  return { signature: sig, tradeLamports: lamportsIn, tokensOut: tokensOut.toString(), route: 'pump' };
+}
 
-    if (!quoteResponse || !quoteResponse.outAmount) {
-      throw new Error('Invalid quote from Jupiter');
-    }
+async function buyToken({ privateKey, mint, sol, slippageBps = 500 }) {
+  const { buyToken: buyTokenJupiterSafe } = require('./readme.js');
+  try {
+    const result = await buyTokenJupiterSafe({
+      privateKey,
+      mint,
+      sol: String(sol),
+      slippageBps,
+    });
 
-    const instructionsUrl = 'https://public.jupiterapi.com/swap-instructions';
-    const body = {
-      quoteResponse,
-      userPublicKey: user.publicKey.toBase58(),
-      wrapAndUnwrapSol: true,
-      dynamicComputeUnitLimit: true,
-      useSharedAccounts: false,
+    return {
+      signature: result.signature,
+      tradeLamports: Math.floor(Number(sol) * LAMPORTS_PER_SOL),
+      meta: {
+        destinationTokenAccount: result.destinationTokenAccount,
+        outputTokenProgramId: result.outputTokenProgramId,
+        jupiterInstructionVersion: result.jupiterInstructionVersion,
+        jupiterBaseUrl: result.jupiterBaseUrl,
+      },
+      route: 'jupiter',
     };
-
-    let swapData;
-    try {
-      const res = await axios.post(instructionsUrl, body, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-      swapData = res.data;
-    } catch (err) {
-      throw new Error(`Jupiter swap-instructions failed: ${err.response?.status || ''} - ${err.response?.data?.error || err.message}`);
-    }
-
-    const { blockhash: bh, lastValidBlockHeight: lvbh } = await connection.getLatestBlockhash('confirmed');
-    const instructions = [];
-
-    // Add all instructions in order
-    if (swapData.tokenLedgerInstruction) {
-      instructions.push(new TransactionInstruction({
-        programId: new PublicKey(swapData.tokenLedgerInstruction.programId),
-        keys: swapData.tokenLedgerInstruction.accounts.map(a => ({
-          pubkey: new PublicKey(a.pubkey),
-          isSigner: a.isSigner,
-          isWritable: a.isWritable
-        })),
-        data: Buffer.from(swapData.tokenLedgerInstruction.data, 'base64')
-      }));
-    }
-
-    if (swapData.computeBudgetInstructions) {
-      swapData.computeBudgetInstructions.forEach(cbi => {
-        instructions.push(new TransactionInstruction({
-          programId: new PublicKey(cbi.programId),
-          keys: cbi.accounts.map(a => ({
-            pubkey: new PublicKey(a.pubkey),
-            isSigner: a.isSigner,
-            isWritable: a.isWritable
-          })),
-          data: Buffer.from(cbi.data, 'base64')
-        }));
-      });
-    }
-
-    if (swapData.setupInstructions) {
-      swapData.setupInstructions.forEach(si => {
-        instructions.push(new TransactionInstruction({
-          programId: new PublicKey(si.programId),
-          keys: si.accounts.map(a => ({
-            pubkey: new PublicKey(a.pubkey),
-            isSigner: a.isSigner,
-            isWritable: a.isWritable
-          })),
-          data: Buffer.from(si.data, 'base64')
-        }));
-      });
-    }
-
-    if (swapData.swapInstruction) {
-      instructions.push(new TransactionInstruction({
-        programId: new PublicKey(swapData.swapInstruction.programId),
-        keys: swapData.swapInstruction.accounts.map(a => ({
-          pubkey: new PublicKey(a.pubkey),
-          isSigner: a.isSigner,
-          isWritable: a.isWritable
-        })),
-        data: Buffer.from(swapData.swapInstruction.data, 'base64')
-      }));
-    }
-
-    if (swapData.otherInstructions) {
-      swapData.otherInstructions.forEach(oi => {
-        instructions.push(new TransactionInstruction({
-          programId: new PublicKey(oi.programId),
-          keys: oi.accounts.map(a => ({
-            pubkey: new PublicKey(a.pubkey),
-            isSigner: a.isSigner,
-            isWritable: a.isWritable
-          })),
-          data: Buffer.from(oi.data, 'base64')
-        }));
-      });
-    }
-
-    if (swapData.cleanupInstruction) {
-      instructions.push(new TransactionInstruction({
-        programId: new PublicKey(swapData.cleanupInstruction.programId),
-        keys: swapData.cleanupInstruction.accounts.map(a => ({
-          pubkey: new PublicKey(a.pubkey),
-          isSigner: a.isSigner,
-          isWritable: a.isWritable
-        })),
-        data: Buffer.from(swapData.cleanupInstruction.data, 'base64')
-      }));
-    }
-
-    let lookupTables = [];
-    if (swapData.addressLookupTableAddresses && swapData.addressesByLookupTableAddress) {
-      for (const addr of swapData.addressLookupTableAddresses) {
-        const altData = swapData.addressesByLookupTableAddress[addr];
-        if (altData) {
-          lookupTables.push({
-            key: new PublicKey(addr),
-            writableIndexes: altData.writableIndexes || [],
-            readonlyIndexes: altData.readonlyIndexes || []
-          });
-        }
-      }
-    }
-
-    const messageV0 = new TransactionMessage({
-      payerKey: user.publicKey,
-      recentBlockhash: bh,
-      instructions
-    }).compileToV0Message(lookupTables);
-
-    const versionedTx = new VersionedTransaction(messageV0);
-    versionedTx.sign([user]);
-
-    const sig = await sendTx(versionedTx, [user]);
-
-    return { signature: sig, tradeLamports };
+  } catch (e) {
+    return await pumpBuyToken({ privateKey, mint, sol, slippageBps: Math.max(1000, slippageBps) });
   }
 }
 async function sellToken({ privateKey, mint, amount, slippageBps = 500 }) {
@@ -605,7 +413,7 @@ async function sellToken({ privateKey, mint, amount, slippageBps = 500 }) {
   const inputMint = mint;
   const outputMint = 'So11111111111111111111111111111111111111112';
 
-  const quoteUrl = `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountRaw.toString()}&slippageBps=${slippageBps}&onlyDirectRoutes=false`;
+  const quoteUrl = `https://public.jupiterapi.com/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountRaw.toString()}&slippageBps=${slippageBps}&onlyDirectRoutes=false&platformFeeBps=0`;
 
   let quoteResponse;
   try {
@@ -617,6 +425,12 @@ async function sellToken({ privateKey, mint, amount, slippageBps = 500 }) {
 
   if (!quoteResponse || !quoteResponse.outAmount) {
     throw new Error('Invalid quote from Jupiter');
+  }
+
+  // Token-2022 compatibility: avoid integrator/platform fee accounts causing
+  // IncorrectTokenProgramID (0x177e) on Route for Token-2022 mints.
+  if (quoteResponse.platformFee) {
+    delete quoteResponse.platformFee;
   }
 
   const instructionsUrl = 'https://public.jupiterapi.com/swap-instructions';
@@ -707,6 +521,30 @@ async function sellToken({ privateKey, mint, amount, slippageBps = 500 }) {
 
 
 
+async function collectCreatorFee({ privateKey } = {}) {
+  const creator = keypairFromPrivateKey(privateKey);
+  const creatorVault = creatorVaultPda(creator.publicKey);
+
+  const tx = new Transaction().add(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPriceMicrolamports(200_000) }),
+    new TransactionInstruction({
+      programId: PUMP_PROGRAM_ID,
+      keys: [
+        { pubkey: creator.publicKey, isSigner: true, isWritable: true },
+        { pubkey: creatorVault, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+        { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data: anchorDisc('collect_creator_fee'),
+    })
+  );
+
+  const sig = await sendTx(tx, [creator]);
+  return { signature: sig, creator: creator.publicKey.toBase58(), creatorVault: creatorVault.toBase58() };
+}
+
 // Pump.fun create + optional initial buy
 async function deployToken({
   privateKey,
@@ -738,6 +576,7 @@ async function deployToken({
   const mintAuthority = mintAuthorityPda();
   const creatorVault = creatorVaultPda(creator.publicKey);
   const userVolumeAccumulator = userVolumeAccumulatorPda(creator.publicKey);
+  const bondingCurveV2 = bondingCurveV2Pda(mint.publicKey);
 
   const nameBytes = Buffer.from(name, 'utf8');
   const symbolBytes = Buffer.from(symbol, 'utf8');
@@ -804,7 +643,6 @@ async function deployToken({
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    // Create ATA for user (new mint => should not exist)
     tx.add(
       createAssociatedTokenAccountInstruction(
         creator.publicKey,
@@ -816,13 +654,11 @@ async function deployToken({
       )
     );
 
-    // Pump.fun initial virtual reserves (as provided)
-    const INITIAL_VIRTUAL_TOKEN = 1_073_000_000_000_000n;
-    const INITIAL_VIRTUAL_SOL = 30_000_000_000n;
+    const INITIAL_VIRTUAL_TOKEN = 1_073_000_191_000_000n;
+    const INITIAL_VIRTUAL_SOL = 30_000_000_000_000n;
 
     const lamportsIn = Math.floor(initialBuySol * LAMPORTS_PER_SOL);
     const tradeLamportsBig = BigInt(lamportsIn);
-
     const sBps = Number.isFinite(slippageBps) ? Math.max(0, Math.floor(slippageBps)) : 1000;
 
     const newSol = INITIAL_VIRTUAL_SOL + tradeLamportsBig;
@@ -851,6 +687,7 @@ async function deployToken({
       { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
       { pubkey: PUMP_FEE_CONFIG, isSigner: false, isWritable: false },
       { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: bondingCurveV2, isSigner: false, isWritable: false },
     ];
 
     tx.add(
@@ -905,6 +742,7 @@ async function deployToken({
     signature: sig,
     mint: mint.publicKey.toBase58(),
     bondingCurve: bondingCurve.toBase58(),
+    initialBuyInBlock0: initialBuySol > 0,
   };
 }
 function createWallet() {
@@ -1004,6 +842,7 @@ async function main() {
 
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(`Welcome to Moltwallet!\nDeveloped solely by https://x.com/gillbertoed and Claude Opus. Try it out!\n\nTo open this menu anytime, just type: moltwallet\n\nSuggestions:\n1) send SOL\n2) buy token\n3) sell token\n4) check balances\n\nYou can ask me anything. Try:\n"hey can you set a cron job to check on my current token positions and sell if they go below $100"\n\nCommands:\n  create\n  import --in <PRIVATE_KEY_FILE>\n  balance <PUBKEY>\n  contacts add <NAME> <PUBKEY>\n  contacts list\n  contacts remove <NAME>\n  tokens --keyfile <WALLET_JSON>\n  buy --keyfile <WALLET_JSON> --mint <MINT> --sol <AMOUNT> [--slippageBps <BPS>]\n  sell --keyfile <WALLET_JSON> --mint <MINT> --amount <AMOUNT> [--slippageBps <BPS>]
+  claim --keyfile <WALLET_JSON>
   deploy --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> --uri <METADATA_URI> [--initialBuySol <SOL>] [--slippageBps <BPS>] [--simulate]
   genmint [--out <FILE>] [--force]\n  send --keyfile <WALLET_JSON> --mint <MINT> --to <PUBKEY> --amount <AMOUNT> [--decimals <N>]\n  solsend --keyfile <WALLET_JSON> --to <PUBKEY> --sol <AMOUNT>\n  check\n  checkversion\n`);
     return;
@@ -1233,6 +1072,17 @@ async function main() {
     return;
   }
 
+
+  if (cmd === 'claim') {
+    const keyfile = getFlag('keyfile');
+    if (!keyfile) {
+      throw new Error('Usage: claim --keyfile <WALLET_JSON>');
+    }
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    const res = await collectCreatorFee({ privateKey });
+    console.log(JSON.stringify(res, null, 2));
+    return;
+  }
 
   if (cmd === 'deploy') {
     const keyfile = getFlag('keyfile');
