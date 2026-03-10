@@ -5,8 +5,8 @@ const { RPC_URL } = require('./config/constants');
 
 const { buy } = require('./pump/buy');
 const { sell } = require('./pump/sell');
-const { deploy } = require('./pump/deploy');
-const { claim } = require('./pump/claim');
+const { deploy, deploy2 } = require('./pump/deploy');
+const { claim, claimMintFee } = require('./pump/claim');
 const { getPrivateKeyFromFile, getKeypairFromFile } = require('./utils/wallet');
 const { addLaunch, listLaunches, getLaunch, setLauncherWallet } = require('./launcher/launchermap');
 
@@ -51,7 +51,9 @@ function usage() {
   console.log('  buy --keyfile <WALLET_JSON> --mint <MINT> --sol <AMOUNT> [--slippageBps <BPS>]');
   console.log('  sell --keyfile <WALLET_JSON> --mint <MINT> --amount <AMOUNT> [--slippageBps <BPS>]');
   console.log('  deploy --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> --uri <METADATA_URI> [--initialBuySol <SOL>] [--slippageBps <BPS>] [--simulate]');
+  console.log('  deploy2 --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> --uri <METADATA_URI> --recipients <w1,w2> --bps <8000,2000> [--initialBuySol <SOL>] [--slippageBps <BPS>] [--launcherId <ID>] [--simulate]');
   console.log('  claim --keyfile <WALLET_JSON>');
+  console.log('  claim-mint --keyfile <WALLET_JSON> --mint <MINT> [--launcherId <ID>] [--simulate]');
   console.log('  launchermap list|get|set|add ...');
   console.log('  check');
 }
@@ -162,6 +164,46 @@ async function main() {
       simulate,
     });
     console.log(JSON.stringify(res, null, 2));
+    console.log(`DEPLOY_PROOF tx=${res.tx ?? res.signature ?? 'simulated'} mint=${res.mint} creator=${res.creator ?? 'unknown'} fee_mode=${res.fee_mode ?? 'unknown'} recipients=${JSON.stringify(res.recipients ?? [])}`);
+    return;
+  }
+
+  if (cmd === 'deploy2') {
+    const keyfile = requireFlag(flags, 'keyfile', 'Missing --keyfile');
+    const mintkeyfile = requireFlag(flags, 'mintkeyfile', 'Missing --mintkeyfile');
+    const name = requireFlag(flags, 'name', 'Missing --name');
+    const symbol = requireFlag(flags, 'symbol', 'Missing --symbol');
+    const metadataUri = requireFlag(flags, 'uri', 'Missing --uri');
+    const recipientsRaw = requireFlag(flags, 'recipients', 'Missing --recipients');
+    const bpsRaw = requireFlag(flags, 'bps', 'Missing --bps');
+    const initialBuySol = Number(flags.initialBuySol ?? 0);
+    const slippageBps = Number(flags.slippageBps ?? flags.slippage ?? 1000);
+    const launcherId = flags.launcherId ? String(flags.launcherId) : null;
+    const simulate = !!flags.simulate;
+
+    const recipients = String(recipientsRaw).split(',').map((s) => s.trim()).filter(Boolean);
+    const bps = String(bpsRaw).split(',').map((s) => Number(s.trim()));
+    if (recipients.length !== bps.length) throw new Error('recipients and bps counts must match');
+    if (bps.some((x) => !Number.isFinite(x) || x <= 0)) throw new Error('all bps values must be positive numbers');
+
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    const mintKeypair = getKeypairFromFile(mintkeyfile);
+
+    const res = await deploy2({
+      privateKey,
+      mintKeypair,
+      name,
+      symbol,
+      metadataUri,
+      recipients,
+      bps,
+      initialBuySol,
+      slippageBps,
+      launcherId,
+      simulate,
+    });
+    console.log(JSON.stringify(res, null, 2));
+    console.log(`DEPLOY_PROOF tx=${res.tx ?? res.signature ?? 'simulated'} mint=${res.mint} creator=${res.creator ?? 'unknown'} fee_mode=${res.fee_mode ?? 'unknown'} recipients=${JSON.stringify(res.recipients ?? [])}`);
     return;
   }
 
@@ -169,6 +211,18 @@ async function main() {
     const keyfile = requireFlag(flags, 'keyfile', 'Missing --keyfile');
     const res = await claim({ keyfile });
     console.log(JSON.stringify(res, null, 2));
+    return;
+  }
+
+  if (cmd === 'claim-mint') {
+    const keyfile = requireFlag(flags, 'keyfile', 'Missing --keyfile');
+    const mint = requireFlag(flags, 'mint', 'Missing --mint');
+    const launcherId = flags.launcherId ? String(flags.launcherId) : null;
+    const simulate = !!flags.simulate;
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    const res = await claimMintFee({ privateKey, mint, launcherId, simulate });
+    console.log(JSON.stringify(res, null, 2));
+    console.log(`CLAIM_PROOF tx=${res.tx ?? res.signature ?? 'simulated'} mint=${res.mint ?? mint} claimed_SOL=${res.claimed_sol ?? '0.000000'}`);
     return;
   }
 
