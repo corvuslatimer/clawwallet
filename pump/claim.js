@@ -11,8 +11,8 @@ const { readPrivateKey, getPrivateKeyFromFile } = require('../utils/wallet');
 const { anchorDisc } = require('../utils/encoding');
 const { connection } = require('../solana/connection');
 const { sendTx, computeUnitPriceMicrolamports } = require('../solana/tx');
-const { PUMP_PROGRAM_ID, PUMP_FEE_PROGRAM_ID } = require('../config/constants');
-const { PUMP_EVENT_AUTHORITY, PUMP_FEE_CONFIG, creatorVaultPda, bondingCurvePda, sharingConfigPda } = require('../solana/pda');
+const { PUMP_PROGRAM_ID } = require('../config/constants');
+const { PUMP_EVENT_AUTHORITY, creatorVaultPda, bondingCurvePda, sharingConfigPda } = require('../solana/pda');
 const { loadMap, getLaunch } = require('../launcher/launchermap');
 const { validatePdas } = require('./feeSharing');
 
@@ -61,7 +61,7 @@ async function claimMintFee({ privateKey, mint, launcherId = null, simulate = fa
   enforceLauncherWalletIsolation({ launcherId, creatorPk: creator.publicKey, mint });
 
   const bondingCurve = bondingCurvePda(mintPk);
-  const sharingConfig = sharingConfigPda(creator.publicKey);
+  const sharingConfig = sharingConfigPda(mintPk);
   const creatorVaultSharing = creatorVaultPda(sharingConfig);
   const creatorVaultLegacy = creatorVaultPda(creator.publicKey);
 
@@ -82,15 +82,12 @@ async function claimMintFee({ privateKey, mint, launcherId = null, simulate = fa
       programId: PUMP_PROGRAM_ID,
       keys: [
         { pubkey: mintPk, isSigner: false, isWritable: false },
-        { pubkey: bondingCurve, isSigner: false, isWritable: true },
-        { pubkey: sharingConfig, isSigner: false, isWritable: true },
+        { pubkey: bondingCurve, isSigner: false, isWritable: false },
+        { pubkey: sharingConfig, isSigner: false, isWritable: false },
         { pubkey: vaultToUse, isSigner: false, isWritable: true },
-        { pubkey: creator.publicKey, isSigner: true, isWritable: true },
-        { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
-        { pubkey: PUMP_FEE_CONFIG, isSigner: false, isWritable: false },
-        { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
       ],
       data: anchorDisc('distribute_creator_fees'),
     })

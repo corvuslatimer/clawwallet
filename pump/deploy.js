@@ -11,6 +11,7 @@ const {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const { anchorDisc } = require('../utils/encoding');
@@ -20,8 +21,6 @@ const { computeUnitPriceMicrolamports } = require('../solana/tx');
 const {
   PUMP_PROGRAM_ID,
   PUMP_FEE_PROGRAM_ID,
-  MPL_TOKEN_METADATA_PROGRAM_ID,
-  SYSVAR_RENT,
 } = require('../config/constants');
 const {
   PUMP_GLOBAL,
@@ -30,7 +29,6 @@ const {
   PUMP_FEE_CONFIG,
   bondingCurvePda,
   mintAuthorityPda,
-  metadataPda,
   creatorVaultPda,
   userVolumeAccumulatorPda,
   sharingConfigPda,
@@ -52,6 +50,17 @@ function enforceLauncherWalletIsolation({ launcherId, creatorPk }) {
   if (entry.wallet !== creatorPk.toBase58()) {
     throw new Error(`launcher wallet isolation failed: launcher '${launcherId}' is mapped to ${entry.wallet}, but signer is ${creatorPk.toBase58()}`);
   }
+}
+
+const MAYHEM_PROGRAM_ID = new PublicKey('MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e');
+function mayhemGlobalParamsPda() {
+  return PublicKey.findProgramAddressSync([Buffer.from('global-params')], MAYHEM_PROGRAM_ID)[0];
+}
+function mayhemSolVaultPda() {
+  return PublicKey.findProgramAddressSync([Buffer.from('sol-vault')], MAYHEM_PROGRAM_ID)[0];
+}
+function mayhemStatePda(mintPk) {
+  return PublicKey.findProgramAddressSync([Buffer.from('mayhem-state'), mintPk.toBuffer()], MAYHEM_PROGRAM_ID)[0];
 }
 
 async function deploy2({
@@ -83,41 +92,36 @@ async function deploy2({
   const mintPk = mintKeypair.publicKey;
   const recipientPks = recipients.map((r) => new PublicKey(r));
 
-  const sharingConfig = sharingConfigPda(creator.publicKey);
+  const sharingConfig = sharingConfigPda(mintPk);
   const creatorVault = creatorVaultPda(sharingConfig);
   const bondingCurve = bondingCurvePda(mintPk);
   const associatedBondingCurve = await getAssociatedTokenAddress(
     mintPk,
     bondingCurve,
     true,
-    TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
-  const metadata = metadataPda(mintPk);
   const mintAuthority = mintAuthorityPda();
   const userVolumeAccumulator = userVolumeAccumulatorPda(creator.publicKey);
 
   validatePdas({ mintPk, creatorPk: creator.publicKey, sharingConfig });
 
-  const numRecipients = recipientPks.length;
-  const feeConfigDataLen = 8 + 1 + numRecipients * (32 + 2);
-  const feeConfigData = Buffer.alloc(feeConfigDataLen);
-  let fco = 0;
-  anchorDisc('create_fee_sharing_config').copy(feeConfigData, fco); fco += 8;
-  feeConfigData.writeUInt8(numRecipients, fco); fco += 1;
-  for (let i = 0; i < numRecipients; i++) {
-    recipientPks[i].toBuffer().copy(feeConfigData, fco); fco += 32;
-    feeConfigData.writeUInt16LE(Number(bps[i]), fco); fco += 2;
-  }
+  const feeConfigData = anchorDisc('create_fee_sharing_config');
 
   const feeConfigIx = new TransactionInstruction({
-    programId: PUMP_PROGRAM_ID,
+    programId: PUMP_FEE_PROGRAM_ID,
     keys: [
+      { pubkey: PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], PUMP_FEE_PROGRAM_ID)[0], isSigner: false, isWritable: false },
+      { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: creator.publicKey, isSigner: true, isWritable: true },
+      { pubkey: PUMP_GLOBAL, isSigner: false, isWritable: false },
+      { pubkey: mintPk, isSigner: false, isWritable: false },
       { pubkey: sharingConfig, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+      { pubkey: bondingCurve, isSigner: false, isWritable: true },
       { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
     ],
     data: feeConfigData,
   });
@@ -126,7 +130,7 @@ async function deploy2({
   const symbolBytes = Buffer.from(symbol, 'utf8');
   const uriBytes = Buffer.from(metadataUri, 'utf8');
 
-  const createDataLen = 8 + 4 + nameBytes.length + 4 + symbolBytes.length + 4 + uriBytes.length + 32;
+  const createDataLen = 8 + 4 + nameBytes.length + 4 + symbolBytes.length + 4 + uriBytes.length + 32 + 1 + 2;
   const createData = Buffer.alloc(createDataLen);
   let offset = 0;
   anchorDisc('create_v2').copy(createData, offset); offset += 8;
@@ -136,12 +140,24 @@ async function deploy2({
   symbolBytes.copy(createData, offset); offset += symbolBytes.length;
   createData.writeUInt32LE(uriBytes.length, offset); offset += 4;
   uriBytes.copy(createData, offset); offset += uriBytes.length;
-  creator.publicKey.toBuffer().copy(createData, offset);
+  creator.publicKey.toBuffer().copy(createData, offset); offset += 32;
+  createData.writeUInt8(0, offset); offset += 1;
+  encodeOptionBool(false).copy(createData, offset);
+
+  const mayhemGlobalParams = mayhemGlobalParamsPda();
+  const mayhemSolVault = mayhemSolVaultPda();
+  const mayhemState = mayhemStatePda(mintPk);
+  const mayhemTokenVault = await getAssociatedTokenAddress(
+    mintPk,
+    mayhemSolVault,
+    true,
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
 
   const tx = new Transaction().add(
     ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPriceMicrolamports(500_000) }),
-    feeConfigIx,
     new TransactionInstruction({
       programId: PUMP_PROGRAM_ID,
       keys: [
@@ -150,24 +166,21 @@ async function deploy2({
         { pubkey: bondingCurve, isSigner: false, isWritable: true },
         { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
         { pubkey: PUMP_GLOBAL, isSigner: false, isWritable: false },
-        { pubkey: MPL_TOKEN_METADATA_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: metadata, isSigner: false, isWritable: true },
         { pubkey: creator.publicKey, isSigner: true, isWritable: true },
-        { pubkey: sharingConfig, isSigner: false, isWritable: true },
-        { pubkey: creatorVault, isSigner: false, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: SYSVAR_RENT, isSigner: false, isWritable: false },
+        { pubkey: MAYHEM_PROGRAM_ID, isSigner: false, isWritable: true },
+        { pubkey: mayhemGlobalParams, isSigner: false, isWritable: false },
+        { pubkey: mayhemSolVault, isSigner: false, isWritable: true },
+        { pubkey: mayhemState, isSigner: false, isWritable: true },
+        { pubkey: mayhemTokenVault, isSigner: false, isWritable: true },
         { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
         { pubkey: PUMP_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: PUMP_FEE_CONFIG, isSigner: false, isWritable: false },
-        { pubkey: PUMP_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: PUMP_GLOBAL_VOLUME_ACCUMULATOR, isSigner: false, isWritable: true },
-        { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
       ],
       data: createData,
-    })
+    }),
+    feeConfigIx
   );
 
   if (Number(initialBuySol) > 0) {

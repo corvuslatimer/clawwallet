@@ -30,8 +30,8 @@ function userVolumeAccumulatorPda(user) {
 function bondingCurveV2Pda(mintPk) {
   return PublicKey.findProgramAddressSync([Buffer.from('bonding-curve-v2'), mintPk.toBuffer()], PUMP_PROGRAM_ID)[0];
 }
-function sharingConfigPda(creator) {
-  return PublicKey.findProgramAddressSync([Buffer.from('sharing_config'), creator.toBuffer()], PUMP_PROGRAM_ID)[0];
+function sharingConfigPda(mintPk) {
+  return PublicKey.findProgramAddressSync([Buffer.from('sharing-config'), mintPk.toBuffer()], PUMP_FEE_PROGRAM_ID)[0];
 }
 
 module.exports = {

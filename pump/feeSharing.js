@@ -6,7 +6,7 @@ const { loadMap } = require('../launcher/launchermap');
 function validatePdas({ mintPk, creatorPk, sharingConfig }) {
   const mint = mintPk instanceof PublicKey ? mintPk : new PublicKey(mintPk);
   const creator = creatorPk instanceof PublicKey ? creatorPk : new PublicKey(creatorPk);
-  const derivedSharingConfig = sharingConfigPda(creator);
+  const derivedSharingConfig = sharingConfigPda(mint);
 
   if (sharingConfig) {
     const expected = sharingConfig instanceof PublicKey ? sharingConfig : new PublicKey(sharingConfig);
@@ -18,7 +18,8 @@ function validatePdas({ mintPk, creatorPk, sharingConfig }) {
   return {
     bondingCurve: bondingCurvePda(mint),
     sharingConfig: derivedSharingConfig,
-    creatorVault: creatorVaultPda(sharingConfig ? (sharingConfig instanceof PublicKey ? sharingConfig : new PublicKey(sharingConfig)) : creator),
+    creatorVault: creatorVaultPda(derivedSharingConfig),
+    creator,
     feeConfig: PUMP_FEE_CONFIG,
   };
 }
