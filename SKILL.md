@@ -39,6 +39,19 @@ Notes:
 
 ## 3) Command catalog
 
+### Bitrefill (no package install)
+- Integrated as a subcommand in main CLI:
+```bash
+node cli.js bitrefill help
+node cli.js bitrefill list-tools
+node cli.js bitrefill search --query "netflix" --country US
+```
+- Uses local script: `/root/.openclaw/workspace/projects/clawwallet/bitrefill/cli.js`.
+- No `@bitrefill/cli` install required.
+- If user is not authenticated, guide with a simple link-first flow:
+  - Sign in/create API key: `https://www.bitrefill.com/account/developers`
+  - Set `BITREFILL_API_KEY` and retry command.
+
 ### Core CLI
 ```bash
 node cli.js check

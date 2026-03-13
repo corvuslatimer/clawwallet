@@ -11,6 +11,7 @@ const { redirectMintFees } = require('./pump/feeSharing');
 const { unwrapWsol } = require('./pump/unwrap');
 const { getPrivateKeyFromFile, getKeypairFromFile } = require('./utils/wallet');
 const { addLaunch, listLaunches, getLaunch, setLauncherWallet } = require('./launcher/launchermap');
+const { spawn } = require('node:child_process');
 
 const VERSION = 'v1.4';
 
@@ -59,6 +60,7 @@ function usage() {
   console.log('  fee-redirect --keyfile <WALLET_JSON> --mint <MINT> --recipient <WALLET> [--bps <N>] [--simulate]');
   console.log('  unwrap-wsol --keyfile <WALLET_JSON> [--simulate]');
   console.log('  launchermap list|get|set|add ...');
+  console.log('  bitrefill [oauth|api] ... (proxy to ./bitrefill/oauthcli.js or ./bitrefill/apicli.js)');
   console.log('  check');
 }
 
@@ -118,6 +120,27 @@ async function main() {
 
   if (cmd === 'launchermap') {
     await runLaunchermap(positionals[1], positionals.slice(2), flags);
+    return;
+  }
+
+  if (cmd === 'bitrefill') {
+    const mode = positionals[1];
+    const hasMode = mode === 'oauth' || mode === 'api';
+    const target = hasMode ? (mode === 'api' ? './bitrefill/apicli.js' : './bitrefill/oauthcli.js') : './bitrefill/oauthcli.js';
+    const subArgs = hasMode ? process.argv.slice(4) : process.argv.slice(3);
+
+    await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [target, ...subArgs], {
+        cwd: __dirname,
+        stdio: 'inherit',
+        env: process.env,
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => {
+        if (code === 0) return resolve();
+        reject(new Error(`bitrefill subcommand exited with code ${code}`));
+      });
+    });
     return;
   }
 
