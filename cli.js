@@ -7,6 +7,8 @@ const { buy } = require('./pump/buy');
 const { sell } = require('./pump/sell');
 const { deploy, deploy2 } = require('./pump/deploy');
 const { claim, claimMintFee } = require('./pump/claim');
+const { redirectMintFees } = require('./pump/feeSharing');
+const { unwrapWsol } = require('./pump/unwrap');
 const { getPrivateKeyFromFile, getKeypairFromFile } = require('./utils/wallet');
 const { addLaunch, listLaunches, getLaunch, setLauncherWallet } = require('./launcher/launchermap');
 
@@ -50,10 +52,12 @@ function usage() {
   console.log('Migrated commands:');
   console.log('  buy --keyfile <WALLET_JSON> --mint <MINT> --sol <AMOUNT> [--slippageBps <BPS>]');
   console.log('  sell --keyfile <WALLET_JSON> --mint <MINT> --amount <AMOUNT> [--slippageBps <BPS>]');
-  console.log('  deploy --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> --uri <METADATA_URI> [--initialBuySol <SOL>] [--slippageBps <BPS>] [--simulate]');
-  console.log('  deploy2 --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> --uri <METADATA_URI> --recipients <w1,w2> --bps <8000,2000> [--initialBuySol <SOL>] [--slippageBps <BPS>] [--launcherId <ID>] [--simulate]');
+  console.log('  deploy --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> [--uri <METADATA_URI>] --initialBuySol <SOL> [--description <TEXT>] [--twitter <URL>] [--telegram <URL>] [--website <URL>] [--imageUri <URL>] [--slippageBps <BPS>] [--simulate]');
+  console.log('  deploy2 --keyfile <WALLET_JSON> --mintkeyfile <MINT_KEYPAIR_JSON> --name <NAME> --symbol <SYMBOL> [--uri <METADATA_URI>] --recipients <w1,w2> --bps <8000,2000> --initialBuySol <SOL> [--description <TEXT>] [--twitter <URL>] [--telegram <URL>] [--website <URL>] [--imageUri <URL>] [--slippageBps <BPS>] [--launcherId <ID>] [--simulate]');
   console.log('  claim --keyfile <WALLET_JSON>');
   console.log('  claim-mint --keyfile <WALLET_JSON> --mint <MINT> [--launcherId <ID>] [--simulate]');
+  console.log('  fee-redirect --keyfile <WALLET_JSON> --mint <MINT> --recipient <WALLET> [--bps <N>] [--simulate]');
+  console.log('  unwrap-wsol --keyfile <WALLET_JSON> [--simulate]');
   console.log('  launchermap list|get|set|add ...');
   console.log('  check');
 }
@@ -145,9 +149,15 @@ async function main() {
     const mintkeyfile = requireFlag(flags, 'mintkeyfile', 'Missing --mintkeyfile');
     const name = requireFlag(flags, 'name', 'Missing --name');
     const symbol = requireFlag(flags, 'symbol', 'Missing --symbol');
-    const metadataUri = requireFlag(flags, 'uri', 'Missing --uri');
-    const initialBuySol = Number(flags.initialBuySol ?? 0);
+    const metadataUri = flags.uri ? String(flags.uri) : '';
+    const description = flags.description ? String(flags.description) : '';
+    const twitter = flags.twitter ? String(flags.twitter) : '';
+    const telegram = flags.telegram ? String(flags.telegram) : '';
+    const website = flags.website ? String(flags.website) : '';
+    const imageUri = flags.imageUri ? String(flags.imageUri) : '';
+    const initialBuySol = Number(requireFlag(flags, 'initialBuySol', 'Missing --initialBuySol (required; must be > 0)'));
     const slippageBps = Number(flags.slippageBps ?? flags.slippage ?? 1000);
+    if (!Number.isFinite(initialBuySol) || initialBuySol <= 0) throw new Error('--initialBuySol must be a positive number');
     const simulate = !!flags.simulate;
 
     const privateKey = getPrivateKeyFromFile(keyfile);
@@ -159,6 +169,11 @@ async function main() {
       name,
       symbol,
       metadataUri,
+      description,
+      twitter,
+      telegram,
+      website,
+      imageUri,
       initialBuySol,
       slippageBps,
       simulate,
@@ -173,11 +188,17 @@ async function main() {
     const mintkeyfile = requireFlag(flags, 'mintkeyfile', 'Missing --mintkeyfile');
     const name = requireFlag(flags, 'name', 'Missing --name');
     const symbol = requireFlag(flags, 'symbol', 'Missing --symbol');
-    const metadataUri = requireFlag(flags, 'uri', 'Missing --uri');
+    const metadataUri = flags.uri ? String(flags.uri) : '';
+    const description = flags.description ? String(flags.description) : '';
+    const twitter = flags.twitter ? String(flags.twitter) : '';
+    const telegram = flags.telegram ? String(flags.telegram) : '';
+    const website = flags.website ? String(flags.website) : '';
+    const imageUri = flags.imageUri ? String(flags.imageUri) : '';
     const recipientsRaw = requireFlag(flags, 'recipients', 'Missing --recipients');
     const bpsRaw = requireFlag(flags, 'bps', 'Missing --bps');
-    const initialBuySol = Number(flags.initialBuySol ?? 0);
+    const initialBuySol = Number(requireFlag(flags, 'initialBuySol', 'Missing --initialBuySol (required; must be > 0)'));
     const slippageBps = Number(flags.slippageBps ?? flags.slippage ?? 1000);
+    if (!Number.isFinite(initialBuySol) || initialBuySol <= 0) throw new Error('--initialBuySol must be a positive number');
     const launcherId = flags.launcherId ? String(flags.launcherId) : null;
     const simulate = !!flags.simulate;
 
@@ -195,6 +216,11 @@ async function main() {
       name,
       symbol,
       metadataUri,
+      description,
+      twitter,
+      telegram,
+      website,
+      imageUri,
       recipients,
       bps,
       initialBuySol,
@@ -223,6 +249,30 @@ async function main() {
     const res = await claimMintFee({ privateKey, mint, launcherId, simulate });
     console.log(JSON.stringify(res, null, 2));
     console.log(`CLAIM_PROOF tx=${res.tx ?? res.signature ?? 'simulated'} mint=${res.mint ?? mint} claimed_SOL=${res.claimed_sol ?? '0.000000'}`);
+    return;
+  }
+
+  if (cmd === 'fee-redirect') {
+    const keyfile = requireFlag(flags, 'keyfile', 'Missing --keyfile');
+    const mint = requireFlag(flags, 'mint', 'Missing --mint');
+    const recipient = requireFlag(flags, 'recipient', 'Missing --recipient');
+    const bps = Number(flags.bps ?? 10000);
+    const simulate = !!flags.simulate;
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    const res = await redirectMintFees({ privateKey, mint, recipient, bps, simulate });
+    console.log(JSON.stringify(res, null, 2));
+    return;
+  }
+
+  if (cmd === 'unwrap-wsol') {
+    const keyfile = requireFlag(flags, 'keyfile', 'Missing --keyfile');
+    const simulate = !!flags.simulate;
+    const privateKey = getPrivateKeyFromFile(keyfile);
+    const res = await unwrapWsol({ privateKey, simulate });
+    console.log(JSON.stringify(res, null, 2));
+    if (!res.skipped) {
+      console.log(`UNWRAP_PROOF tx=${res.tx ?? res.signature ?? 'simulated'} owner=${res.owner} wsolAta=${res.wsolAta} amount=${res.amountUi}`);
+    }
     return;
   }
 

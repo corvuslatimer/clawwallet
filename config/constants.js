@@ -1,14 +1,11 @@
+require('dotenv').config({ quiet: true });
 const { PublicKey } = require('@solana/web3.js');
 
-// RPC configuration: prefer env, fallback to local config.json
-let localConfig = {};
-try {
-  localConfig = require('../config.json');
-} catch (_) {
-  localConfig = {};
+// RPC configuration: env only
+const RPC_URL = process.env.RPC_URL;
+if (!RPC_URL) {
+  throw new Error('RPC_URL missing. Set it in environment/.env');
 }
-
-const RPC_URL = process.env.RPC_URL || localConfig.rpcUrl;
 
 const PUMP_SWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
 const PUMP_SWAP_GLOBAL_CONFIG = PublicKey.findProgramAddressSync(

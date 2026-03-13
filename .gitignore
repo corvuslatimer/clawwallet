@@ -1,5 +1,4 @@
-# local wallet data (keys, contacts)
-clawwallet/
+# local wallet/key data
 wallets/
 
 # dependencies
@@ -7,7 +6,11 @@ node_modules/
 
 # environment variables / local config
 .env
+.env.*
 config.json
+
+# local archives / scratch
+.trash/
 
 # logs
 *.log
