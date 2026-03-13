@@ -115,7 +115,26 @@ Proof lines:
 - claim-mint: `CLAIM_PROOF ...`
 - unwrap: `UNWRAP_PROOF ...` (when not skipped)
 
-## 7) Safe operating checklist
+## 7) Updating local clawwallet from GitHub (agent runbook)
+
+When asked to "update wallet" or "pull latest", use this exact flow:
+
+```bash
+cd /root/.openclaw/workspace/projects/clawwallet
+git status
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+npm install
+node cli.js check
+```
+
+Rules:
+- If `git status` is not clean, stash or commit local work before pulling.
+- Do not delete or commit `.env` or `wallets/`.
+- After update, always run `node cli.js check` before any live tx.
+
+## 8) Safe operating checklist
 
 Before live sends:
 1. `node cli.js check`
