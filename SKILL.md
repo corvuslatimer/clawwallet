@@ -61,8 +61,8 @@ node cli.js launchermap list|get|set|add ...
 
 ### PumpSwap scripts (standalone)
 ```bash
-node pumpswap/addLiquidity.js --mint <MINT> --solAmount <SOL_UI> [--tokenAmount <TOKEN_UI>] [--slippageBps 50] [--simulate true|false] [--privateKey <BASE58_OR_JSON>]
-node pumpswap/removeLiquidity.js --mint <MINT> --lpAmount <LP_UI> [--slippageBps 50] [--simulate true|false] [--privateKey <BASE58_OR_JSON>]
+node pumpswap/addLiquidity.js --mint <MINT> --solAmount <SOL_UI> [--tokenAmount <TOKEN_UI>] [--slippageBps 50] [--simulate true|false] [--keyfile <WALLET_JSON>] [--privateKey <BASE58_OR_JSON>]
+node pumpswap/removeLiquidity.js --mint <MINT> --lpAmount <LP_UI> [--slippageBps 50] [--simulate true|false] [--keyfile <WALLET_JSON>] [--privateKey <BASE58_OR_JSON>]
 ```
 
 ## 4) Behavior details
@@ -96,6 +96,10 @@ node pumpswap/removeLiquidity.js --mint <MINT> --lpAmount <LP_UI> [--slippageBps
 ## 5) PumpSwap caveat (important)
 
 Current PumpSwap add/remove implementation is validated against known CoPR pool/account mapping used in live tests.
+
+Credential handling for PumpSwap scripts:
+- Prefer `--keyfile <WALLET_JSON>`.
+- `--privateKey` / `PRIVATE_KEY` are compatibility-only fallbacks.
 
 If you use another mint, verify/derive these correctly before live send:
 - pool PDA/account,

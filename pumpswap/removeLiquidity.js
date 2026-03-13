@@ -16,7 +16,7 @@ const {
   createAssociatedTokenAccountIdempotentInstruction,
   getMint,
 } = require('@solana/spl-token');
-const { readPrivateKey } = require('../utils/wallet');
+const { readPrivateKey, getPrivateKeyFromFile } = require('../utils/wallet');
 const { connection } = require('../solana/connection');
 const { computeUnitPriceMicrolamports } = require('../solana/tx');
 const { PUMP_SWAP_PROGRAM_ID } = require('../config/constants'); // pAMMB...
@@ -160,13 +160,17 @@ if (require.main === module) {
   } = params;
 
   if (!mint || !lpAmountUiStr) {
-    console.error('Usage: node removeLiquidity.js --mint <CA> --lpAmount <UI_AMOUNT> [--slippageBps 50] [--simulate true]');
-    console.error('Example: node removeLiquidity.js --mint CoPRYLGHc7Qadere13xSPhRvgwwStCZn9dHpBZQ7pump --lpAmount 1000 --simulate true');
+    console.error('Usage: node removeLiquidity.js --mint <CA> --lpAmount <UI_AMOUNT> [--slippageBps 50] [--simulate true] [--keyfile <WALLET_JSON>]');
+    console.error('Example: node removeLiquidity.js --mint CoPRYLGHc7Qadere13xSPhRvgwwStCZn9dHpBZQ7pump --lpAmount 1000 --simulate true --keyfile ./wallets/main.json');
     process.exit(1);
   }
 
+  const resolvedPrivateKey = params.keyfile
+    ? getPrivateKeyFromFile(params.keyfile)
+    : (process.env.PRIVATE_KEY || params.privateKey);
+
   removeLiquidityPumpSwap({
-    privateKey: process.env.PRIVATE_KEY || params.privateKey,
+    privateKey: resolvedPrivateKey,
     mint,
     lpAmountUi: parseFloat(lpAmountUiStr),
     slippageBps: parseInt(slippageBps, 10),

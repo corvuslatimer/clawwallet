@@ -19,7 +19,7 @@ const {
   createCloseAccountInstruction,
   getMint,
 } = require('@solana/spl-token');
-const { readPrivateKey } = require('../utils/wallet');
+const { readPrivateKey, getPrivateKeyFromFile } = require('../utils/wallet');
 const { connection } = require('../solana/connection');
 const { computeUnitPriceMicrolamports } = require('../solana/tx');
 const { PUMP_SWAP_PROGRAM_ID } = require('../config/constants'); // pAMMB...
@@ -178,13 +178,17 @@ if (require.main === module) {
   } = params;
 
   if (!mint || (!tokenAmountUiStr && !solAmountUiStr)) {
-    console.error('Usage: node addLiquidity.js --mint <CA> --tokenAmount <UI_AMOUNT> --solAmount <SOL_UI> [--slippageBps 50] [--simulate true]');
-    console.error('Example: node addLiquidity.js --mint CoPRYLGHc7Qadere13xSPhRvgwwStCZn9dHpBZQ7pump --solAmount 0.1 --simulate true');
+    console.error('Usage: node addLiquidity.js --mint <CA> --tokenAmount <UI_AMOUNT> --solAmount <SOL_UI> [--slippageBps 50] [--simulate true] [--keyfile <WALLET_JSON>]');
+    console.error('Example: node addLiquidity.js --mint CoPRYLGHc7Qadere13xSPhRvgwwStCZn9dHpBZQ7pump --solAmount 0.1 --simulate true --keyfile ./wallets/main.json');
     process.exit(1);
   }
 
+  const resolvedPrivateKey = params.keyfile
+    ? getPrivateKeyFromFile(params.keyfile)
+    : (process.env.PRIVATE_KEY || params.privateKey);
+
   addLiquidityPumpSwap({
-    privateKey: process.env.PRIVATE_KEY || params.privateKey,
+    privateKey: resolvedPrivateKey,
     mint,
     tokenAmountUi: tokenAmountUiStr ? parseFloat(tokenAmountUiStr) : 0,
     solAmountUi: solAmountUiStr ? parseFloat(solAmountUiStr) : 0,
